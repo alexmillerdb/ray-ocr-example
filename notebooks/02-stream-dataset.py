@@ -1,4 +1,9 @@
 # Databricks notebook source
+# MAGIC %pip install --upgrade huggingface-hub>=0.27.1
+# MAGIC dbutils.library.restartPython()
+
+# COMMAND ----------
+# MAGIC %run ./00-setup-env
 volume_path = "/Volumes/alex_m/gen_ai/pdfs/data/"
 df = spark.read.parquet(f"{volume_path}/*.parquet")
 print(df.count())
