@@ -1,10 +1,12 @@
 # Databricks notebook source
-# MAGIC %pip install --upgrade huggingface-hub>=0.27.1
-# MAGIC dbutils.library.restartPython()
+# MAGIC %run ./00-setup-env
 
 # COMMAND ----------
-# MAGIC %run ./00-setup-env
-volume_path = "/Volumes/alex_m/gen_ai/pdfs/data/"
+from pathlib import Path
+
+volume_path = Path(f"/Volumes/{UC_CATALOG}/{UC_SCHEMA}/{UC_VOLUME}/data")
+checkpoints_path = Path(f"/Volumes/{UC_CATALOG}/{UC_SCHEMA}/{UC_VOLUME}/checkpoints")
+delta_table_name = f"{UC_CATALOG}.{UC_SCHEMA}.pixparse_pdfs"
 df = spark.read.parquet(f"{volume_path}/*.parquet")
 print(df.count())
 display(df)
@@ -12,7 +14,6 @@ display(df)
 # COMMAND ----------
 
 # Infer schema from existing files
-volume_path = "/Volumes/alex_m/gen_ai/pdfs/data/"
 static_df = spark.read.format("parquet").load(f"{volume_path}/*.parquet")
 schema = static_df.schema
 
@@ -27,15 +28,8 @@ streaming_df = spark.readStream \
 streaming_query = streaming_df.writeStream \
     .format("delta") \
     .outputMode("append") \
-    .option("checkpointLocation", "/Volumes/alex_m/gen_ai/pdfs/checkpoint") \
-    .table("alex_m.gen_ai.pixparse_pdfs")
-    # .start()
+    .option("checkpointLocation", checkpoints_path) \
+    .option("trigger", "availableNow") \
+    .table(delta_table_name)
 
-# COMMAND ----------
-
-streaming_query.stop()
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC OPTIMIZE alex_m.gen_ai.pixparse_pdfs
+streaming_query.awaitTermination()
