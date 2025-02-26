@@ -70,16 +70,18 @@ df.write.mode("overwrite").saveAsTable(delta_table_name)
 
 # COMMAND ----------
 import io
-import ray
+import time
+from pydantic import BaseModel, Field
+from typing import Optional, Tuple, List, Dict, Any
+
 import pytesseract
-from typing import List, Dict, Any
 from pdf2image import convert_from_bytes
 from PIL import Image
+
 from pyspark.sql import functions as F
+import ray
 from ray.util.spark import setup_ray_cluster, shutdown_ray_cluster
 
-from pydantic import BaseModel, Field
-from typing import Optional, Tuple
 
 class RayConfig(BaseModel):
     min_concurrency_factor: float = Field(
@@ -126,7 +128,7 @@ class DataConfig(BaseModel):
     )
     pdf_column: str = Field(
         default="pdf",
-        description="Column name containing PDF content"
+        description="Column name containing PDF content in binary format"
     )
     path_column: str = Field(
         default="__url__",
@@ -193,34 +195,31 @@ class OCRProcessor:
     def __call__(self, batch: Dict[str, Any]) -> Dict[str, List[Any]]:
         results = []
         for page, path, page_number in zip(batch["page"], batch["path"], batch["page_number"]):
-            if page:
-                try:
-                    image = self.bytes_to_pil(page)
-                    text = self.tesseract.image_to_string(image)
-                    results.append({
-                        "page": page,
-                        "path": path,
-                        "page_number": page_number,
-                        "text": text
-                    })
-                except Exception as e:
-                    results.append({
-                        "page": b"",
-                        "path": path,
-                        "page_number": page_number,
-                        "text": "",
-                        "error": str(e)
-                    })
-            else:
+            start_time = time.time()
+            try:
+                image = self.bytes_to_pil(page)
+                text = self.tesseract.image_to_string(image)
                 results.append({
-                    "page": b"",
+                    "text": text or "",
+                    "status": "success",
+                    "error": "",
                     "path": path,
                     "page_number": page_number,
+                    "duration": time.time() - start_time
+                })
+                del image
+            except Exception as e:
+                results.append({
                     "text": "",
-                    "error": "Empty page data"
+                    "status": "error",
+                    "error": str(e),
+                    "path": path,
+                    "page_number": page_number,
+                    "duration": time.time() - start_time
                 })
 
-        return {k: [item[k] for item in results] for k in results[0].keys()}
+        return {key: [item[key] for item in results] for key in results[0].keys()}
+    
 
 def main(config: ProcessingConfig) -> None:
     sdf = (
@@ -272,6 +271,7 @@ def main(config: ProcessingConfig) -> None:
     ocr_dataset_pd = ocr_dataset.to_pandas()
     display(ocr_dataset_pd)
 
+    # write processed dataset to Delta table
     processed_spark_df = spark.createDataFrame(ocr_dataset_pd)
     processed_spark_df.write.mode("overwrite").saveAsTable(config.data.output_table)
 
